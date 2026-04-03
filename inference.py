@@ -203,7 +203,6 @@ def get_image(observation, camera_names):
     curr_images = []
     for cam_name in camera_names:
         curr_image = rearrange(observation['images'][cam_name], 'h w c -> c h w')
-    
         curr_images.append(curr_image)
     curr_image = np.stack(curr_images, axis=0)
     curr_image = torch.from_numpy(curr_image / 255.0).float().cuda().unsqueeze(0)
@@ -244,6 +243,12 @@ def inference_process(args, config, ros_operator, policy, stats, t, pre_action):
         (img_front, img_left, img_right, img_front_depth, img_left_depth, img_right_depth,
          puppet_arm_left, puppet_arm_right, robot_base) = result
         
+        bgr2rgb = True
+        if bgr2rgb:
+            img_front = cv2.cvtColor(img_front, cv2.COLOR_BGR2RGB)
+            img_left = cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB)
+            img_right = cv2.cvtColor(img_right, cv2.COLOR_BGR2RGB)
+
         show_front = img_front
         show_left  = img_left
         show_right = img_right
@@ -372,12 +377,10 @@ def model_inference(args, config, ros_operator, save_episode=True):
     # 发布基础的姿态
     left0 = [-0.00133514404296875, 0.00209808349609375, 0.01583099365234375, -0.032616615295410156, -0.00286102294921875, 0.00095367431640625, 3.557830810546875]
     right0 = [-0.00133514404296875, 0.00438690185546875, 0.034523963928222656, -0.053597450256347656, -0.00476837158203125, -0.00209808349609375, 3.557830810546875]
-    left1 = [-0.00133514404296875, 0.00209808349609375, 0.01583099365234375, -0.032616615295410156, -0.00286102294921875, 0.00095367431640625, -0.3393220901489258]
-    right1 = [-0.00133514404296875, 0.00247955322265625, 0.01583099365234375, -0.032616615295410156, -0.00286102294921875, 0.00095367431640625, -0.3397035598754883]
-    
+    left0 = [0, 0.75, -0.9, 0.0, 0.7, 0]
+    right0 = [0, 0.75, -0.9, 0.0, 0.7, 0]
     ros_operator.puppet_arm_publish_continuous(left0, right0)
     input("Enter any key to continue :")
-    ros_operator.puppet_arm_publish_continuous(left1, right1)
     action = None
     # 推理
     with torch.inference_mode():
@@ -429,7 +432,7 @@ def model_inference(args, config, ros_operator, save_episode=True):
                 left_action = action[:7]  # 取7维度
                 right_action = action[7:14]
                 print(action)
-                if t % 10 == 0:
+                if t % 100 == 0:
                     import ipdb; ipdb.set_trace()
                 
                 ros_operator.puppet_arm_publish(left_action, right_action)  # puppet_arm_publish_continuous_thread
@@ -477,8 +480,8 @@ class BaseController():
             xyzError = [dx, dy]
             rotError = dyaw
             
-            if rotError < math.radians(5) and abs(xyzError[0]) + abs(xyzError[1]) < 0.08:
-                # print("No Need to Move")
+            if abs(rotError) < math.radians(5) and abs(xyzError[0]) + abs(xyzError[1]) < 0.08:
+                print("No Need to Move")
                 return 0, 0, 0
 
             slid_x = xyzError[0] * self.kpxy
@@ -582,9 +585,10 @@ class RosOperator:
             if self.base_controller is None:
                 self.base_controller = BaseController()
             # dx, dy, dyaw = vel
+            print('vel:', vel)
             vx, vy, w = self.base_controller.step(vel)
         print('moveing ', vx, vy, w)
-        # self.base_robot.move(vx, vy, w)
+        self.base_robot.move(vx, vy, w)
 
     def puppet_arm_publish_continuous(self, left, right):
         rate = rospy.Rate(self.args.publish_rate)

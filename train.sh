@@ -15,12 +15,22 @@
 
 
 
+# python train.py \
+#     --dataset_dir data/move_pen_v1 data/move_pen_v2 data/move_pen_v3 \
+#     --camera_names image_wide cam_right_wrist \
+#     --use_all_dirs_for_val True \
+#     --use_robot_base True \
+#     --exp_name act_pick_pen_mix_123 \
+#     --ckpt_dir exp/move_pen_mix_123 \
+#     --batch_size 16 \
+#     --num_epochs 20000
+    
 python train.py \
-    --dataset_dir data/move_pen_v1 data/move_pen_v2 data/move_pen_v3 \
-    --camera_names image_wide cam_right_wrist \
+    --dataset_dir ../arrange_chair_v2 \
+    --camera_names image_wide cam_right_wrist cam_left_wrist \
     --use_all_dirs_for_val True \
     --use_robot_base True \
-    --exp_name act_pick_pen_mix_123 \
-    --ckpt_dir exp/move_pen_mix_123 \
+    --exp_name act_arrange_chair_widenwrist \
+    --ckpt_dir exp/arrange_chair_widenwrist \
     --batch_size 16 \
     --num_epochs 20000
