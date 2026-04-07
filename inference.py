@@ -10,6 +10,13 @@ import os
 import pickle
 import argparse
 from einops import rearrange
+from dataprocess import (
+    CAMERA_NAMES as PANO_CAMERA_NAMES,
+    DEFAULT_FOV as PANO_DEFAULT_FOV,
+    DEFAULT_PATCH_SIZE as PANO_DEFAULT_PATCH_SIZE,
+    build_view_specs as build_pano_view_specs,
+    extract_view as extract_pano_view,
+)
 
 from utils_xyyaw import compute_dict_mean, set_seed, detach_dict # helper functions
 from policy import ACTPolicy, CNNMLPPolicy
@@ -43,6 +50,8 @@ CAMERA_NAME_TO_SOURCE = {
     'cam_right_wrist': 'right',
     'right': 'right',
 }
+PANO_CAMERA_NAME_SET = frozenset(PANO_CAMERA_NAMES)
+PANO_VIEW_SPECS = tuple(build_pano_view_specs())
 
 inference_thread = None
 inference_lock = threading.Lock()
@@ -52,7 +61,72 @@ inference_timestep = None
 base_init_qpos = None
 
 
-def select_camera_streams(camera_names, front_value, left_value, right_value):
+def get_required_rgb_sources(camera_names):
+    required_sources = set()
+    for camera_name in camera_names:
+        if camera_name in PANO_CAMERA_NAME_SET:
+            required_sources.add('pano')
+            continue
+
+        source_name = CAMERA_NAME_TO_SOURCE.get(camera_name)
+        if source_name is None:
+            supported_names = ', '.join(sorted(set(CAMERA_NAME_TO_SOURCE) | PANO_CAMERA_NAME_SET))
+            raise ValueError(
+                f"Unsupported camera name '{camera_name}'. "
+                f"Supported names: {supported_names}"
+            )
+        required_sources.add(source_name)
+    return required_sources
+
+
+def build_pano_camera_streams(
+    panorama,
+    camera_names,
+    fov_deg=PANO_DEFAULT_FOV,
+    patch_size=PANO_DEFAULT_PATCH_SIZE,
+):
+    view_spec_by_name = dict(PANO_VIEW_SPECS)
+    pano_streams = {}
+    for camera_name in camera_names:
+        if camera_name not in view_spec_by_name:
+            supported_names = ', '.join(PANO_CAMERA_NAMES)
+            raise ValueError(
+                f"Unsupported pano camera name '{camera_name}'. "
+                f"Supported pano cameras: {supported_names}"
+            )
+        yaw_deg, pitch_deg = view_spec_by_name[camera_name]
+        pano_streams[camera_name] = extract_pano_view(
+            panorama=panorama,
+            fov_deg=fov_deg,
+            yaw_deg=yaw_deg,
+            pitch_deg=pitch_deg,
+            patch_size=patch_size,
+        )
+    return pano_streams
+
+
+def build_preview_strip(images):
+    images = [image for image in images if image is not None]
+    if not images:
+        raise ValueError("Expected at least one image to build a preview strip.")
+
+    target_height = images[0].shape[0]
+    resized_images = []
+    for image in images:
+        if image.shape[0] == target_height:
+            resized_images.append(image)
+            continue
+
+        scale = target_height / float(image.shape[0])
+        target_width = max(1, int(round(image.shape[1] * scale)))
+        interpolation = cv2.INTER_AREA if image.shape[0] > target_height else cv2.INTER_LINEAR
+        resized_images.append(
+            cv2.resize(image, (target_width, target_height), interpolation=interpolation)
+        )
+    return np.hstack(resized_images)
+
+
+def select_camera_streams(camera_names, front_value, left_value, right_value, pano_value=None):
     source_values = {
         'front': front_value,
         'left': left_value,
@@ -60,10 +134,20 @@ def select_camera_streams(camera_names, front_value, left_value, right_value):
     }
     selected = {}
     used_sources = set()
+    requested_pano_cameras = [name for name in camera_names if name in PANO_CAMERA_NAME_SET]
+    pano_streams = {}
+    if requested_pano_cameras:
+        panorama = pano_value if pano_value is not None else front_value
+        if panorama is None:
+            raise ValueError("Pano cameras were requested, but no pano image was provided.")
+        pano_streams = build_pano_camera_streams(panorama, requested_pano_cameras)
     for camera_name in camera_names:
+        if camera_name in pano_streams:
+            selected[camera_name] = pano_streams[camera_name]
+            continue
         source_name = CAMERA_NAME_TO_SOURCE.get(camera_name)
         if source_name is None:
-            supported_names = ', '.join(sorted(CAMERA_NAME_TO_SOURCE))
+            supported_names = ', '.join(sorted(set(CAMERA_NAME_TO_SOURCE) | PANO_CAMERA_NAME_SET))
             raise ValueError(
                 f"Unsupported camera name '{camera_name}'. "
                 f"Supported names: {supported_names}"
@@ -240,26 +324,34 @@ def inference_process(args, config, ros_operator, policy, stats, t, pre_action):
             rate.sleep()
             continue
         print_flag = True
-        (img_front, img_left, img_right, img_front_depth, img_left_depth, img_right_depth,
+        (img_front, img_left, img_right, img_pano, img_front_depth, img_left_depth, img_right_depth,
          puppet_arm_left, puppet_arm_right, robot_base) = result
         
         bgr2rgb = True
         if bgr2rgb:
-            img_front = cv2.cvtColor(img_front, cv2.COLOR_BGR2RGB)
-            img_left = cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB)
-            img_right = cv2.cvtColor(img_right, cv2.COLOR_BGR2RGB)
+            if img_front is not None:
+                img_front = cv2.cvtColor(img_front, cv2.COLOR_BGR2RGB)
+            if img_left is not None:
+                img_left = cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB)
+            if img_right is not None:
+                img_right = cv2.cvtColor(img_right, cv2.COLOR_BGR2RGB)
+            if img_pano is not None:
+                img_pano = cv2.cvtColor(img_pano, cv2.COLOR_BGR2RGB)
 
-        show_front = img_front
+        show_front = img_front if img_front is not None else img_pano
         show_left  = img_left
         show_right = img_right
 
-        if show_front.dtype != "uint8":
-            show_front = (show_front * 255).astype("uint8")
-            show_left  = (show_left  * 255).astype("uint8")
-            show_right = (show_right * 255).astype("uint8")
-
-        view = np.hstack([show_front, show_left, show_right])
-        cv2.imwrite("/home/agilex/cobot_magic/aloha-devel/act/001.png", view)
+        preview_images = []
+        for image in (show_front, show_left, show_right):
+            if image is None:
+                continue
+            if image.dtype != "uint8":
+                image = (image * 255).astype("uint8")
+            preview_images.append(image)
+        if preview_images:
+            view = build_preview_strip(preview_images)
+            cv2.imwrite("/home/agilex/cobot_magic/aloha-devel/act/001.png", view)
         # xyz, quat = robot_base
         if args.use_robot_base: 
             if base_init_qpos is None:
@@ -279,6 +371,7 @@ def inference_process(args, config, ros_operator, policy, stats, t, pre_action):
             front_value=img_front,
             left_value=img_left,
             right_value=img_right,
+            pano_value=img_pano,
         )
 
         if args.use_depth_image:
@@ -531,6 +624,7 @@ class RosOperator:
         self.puppet_arm_right_deque = None
         self.puppet_arm_left_deque = None
         self.img_front_deque = None
+        self.img_pano_deque = None
         self.img_right_deque = None
         self.img_left_deque = None
         self.img_front_depth_deque = None
@@ -547,6 +641,7 @@ class RosOperator:
         self.ctrl_state_lock = threading.Lock()
         self.base_controller = None
         self.base_robot = None
+        self.required_rgb_sources = get_required_rgb_sources(args.camera_names)
         self.init()
         self.init_ros()
 
@@ -555,6 +650,7 @@ class RosOperator:
         self.img_left_deque = deque()
         self.img_right_deque = deque()
         self.img_front_deque = deque()
+        self.img_pano_deque = deque()
         self.img_left_depth_deque = deque()
         self.img_right_depth_deque = deque()
         self.img_front_depth_deque = deque()
@@ -687,7 +783,13 @@ class RosOperator:
         self.base_robot = base 
     
     def get_frame(self):
-        if len(self.img_front_deque) == 0 or len(self.img_left_deque) == 0 or len(self.img_right_deque) == 0:
+        rgb_deque_by_source = {
+            'front': self.img_front_deque,
+            'left': self.img_left_deque,
+            'right': self.img_right_deque,
+            'pano': self.img_pano_deque,
+        }
+        if any(len(rgb_deque_by_source[source]) == 0 for source in self.required_rgb_sources):
             print('img err')
             return False
         if self.args.use_depth_image and (
@@ -698,10 +800,7 @@ class RosOperator:
         if len(self.puppet_arm_left_deque) == 0 or len(self.puppet_arm_right_deque) == 0:
             print('arm err')
             return False
-        pending_queue = [
-            self.img_front_deque,
-            self.img_left_deque,
-            self.img_right_deque,]
+        pending_queue = [rgb_deque_by_source[source] for source in sorted(self.required_rgb_sources)]
         
         
         
@@ -719,18 +818,28 @@ class RosOperator:
                 dq.popleft()
             return dq.popleft() if len(dq) > 0 else None
 
-        m_front = pop_to_time(self.img_front_deque)
-        m_left = pop_to_time(self.img_left_deque)
-        m_right = pop_to_time(self.img_right_deque)
+        rgb_messages = {
+            source: pop_to_time(rgb_deque_by_source[source])
+            for source in sorted(self.required_rgb_sources)
+        }
         m_larm = pop_to_time(self.puppet_arm_left_deque)
         m_rarm = pop_to_time(self.puppet_arm_right_deque)
 
-        if m_front is None or m_left is None or m_right is None or m_larm is None or m_rarm is None:
+        if any(message is None for message in rgb_messages.values()) or m_larm is None or m_rarm is None:
             return False
 
-        img_front = self.bridge.imgmsg_to_cv2(m_front, "passthrough")
-        img_left = self.bridge.imgmsg_to_cv2(m_left, "passthrough")
-        img_right = self.bridge.imgmsg_to_cv2(m_right, "passthrough")
+        img_front = None
+        if 'front' in rgb_messages:
+            img_front = self.bridge.imgmsg_to_cv2(rgb_messages['front'], "passthrough")
+        img_left = None
+        if 'left' in rgb_messages:
+            img_left = self.bridge.imgmsg_to_cv2(rgb_messages['left'], "passthrough")
+        img_right = None
+        if 'right' in rgb_messages:
+            img_right = self.bridge.imgmsg_to_cv2(rgb_messages['right'], "passthrough")
+        img_pano = None
+        if 'pano' in rgb_messages:
+            img_pano = self.bridge.imgmsg_to_cv2(rgb_messages['pano'], "passthrough")
 
         img_front_depth = img_left_depth = img_right_depth = None
         if self.args.use_depth_image:
@@ -748,7 +857,7 @@ class RosOperator:
             robot_base = self.base_robot.get_localization()
 
         return (
-            img_front, img_left, img_right,
+            img_front, img_left, img_right, img_pano,
             img_front_depth, img_left_depth, img_right_depth,
             m_larm, m_rarm, robot_base
         )
@@ -852,6 +961,11 @@ class RosOperator:
             self.img_front_deque.popleft()
         self.img_front_deque.append(msg)
 
+    def img_pano_callback(self, msg):
+        if len(self.img_pano_deque) >= 2000:
+            self.img_pano_deque.popleft()
+        self.img_pano_deque.append(msg)
+
     def img_left_depth_callback(self, msg):
         if len(self.img_left_depth_deque) >= 2000:
             self.img_left_depth_deque.popleft()
@@ -898,6 +1012,7 @@ class RosOperator:
         rospy.Subscriber(self.args.img_left_topic, Image, self.img_left_callback, queue_size=1000, tcp_nodelay=True)
         rospy.Subscriber(self.args.img_right_topic, Image, self.img_right_callback, queue_size=1000, tcp_nodelay=True)
         rospy.Subscriber(self.args.img_front_topic, Image, self.img_front_callback, queue_size=1000, tcp_nodelay=True)
+        rospy.Subscriber(self.args.img_pano_topic, Image, self.img_pano_callback, queue_size=1000, tcp_nodelay=True)
         if self.args.use_depth_image:
             rospy.Subscriber(self.args.img_left_depth_topic, Image, self.img_left_depth_callback, queue_size=1000, tcp_nodelay=True)
             rospy.Subscriber(self.args.img_right_depth_topic, Image, self.img_right_depth_callback, queue_size=1000, tcp_nodelay=True)
@@ -949,6 +1064,8 @@ def get_arguments():
 
     parser.add_argument('--img_front_topic', action='store', type=str, help='img_front_topic',
                         default='/wide_cam/image_raw', required=False)
+    parser.add_argument('--img_pano_topic', action='store', type=str, help='img_pano_topic',
+                        default='/pano_cam/image_raw', required=False)
     parser.add_argument('--img_left_topic', action='store', type=str, help='img_left_topic',
                         default='/camera_l/color/image_raw', required=False)
     parser.add_argument('--img_right_topic', action='store', type=str, help='img_right_topic',

@@ -25,12 +25,23 @@
 #     --batch_size 16 \
 #     --num_epochs 20000
     
+# python train.py \
+#     --dataset_dir ../arrange_chair_v2 \
+#     --camera_names pano_yaw_m180 pano_yaw_m120 pano_yaw_m060 pano_yaw_p000 pano_yaw_p060 pano_yaw_p120 \
+#     --use_all_dirs_for_val True \
+#     --use_robot_base True \
+#     --exp_name act_arrange_chair_widenwrist \
+#     --ckpt_dir exp/arrange_chair_widenwrist \
+#     --batch_size 16 \
+#     --num_epochs 20000
+
+
 python train.py \
-    --dataset_dir ../arrange_chair_v2 \
-    --camera_names image_wide cam_right_wrist cam_left_wrist \
+    --dataset_dir ../move_pen/move_pen_9im_v1 ../move_pen/move_pen_9im_v2 ../move_pen/move_pen_9im_v3 \
+    --camera_names pano_yaw_m180 pano_yaw_m120 pano_yaw_m060 pano_yaw_p000 pano_yaw_p060 pano_yaw_p120 \
     --use_all_dirs_for_val True \
     --use_robot_base True \
-    --exp_name act_arrange_chair_widenwrist \
-    --ckpt_dir exp/arrange_chair_widenwrist \
-    --batch_size 16 \
-    --num_epochs 20000
+    --exp_name move_pen_pano_as_6im \
+    --ckpt_dir exp/move_pen_pano_as_6im \
+    --batch_size 8 \
+    --num_epochs 30000
