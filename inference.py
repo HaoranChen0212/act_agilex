@@ -126,6 +126,34 @@ def build_preview_strip(images):
     return np.hstack(resized_images)
 
 
+def build_image_grid(images, num_columns=3):
+    images = [image for image in images if image is not None]
+    if not images:
+        raise ValueError("Expected at least one image to build an image grid.")
+    if num_columns <= 0:
+        raise ValueError(f"num_columns must be positive, but got {num_columns}.")
+
+    target_height, target_width = images[0].shape[:2]
+    prepared_images = []
+    for image in images:
+        if image.dtype != np.uint8:
+            image = (image * 255).astype("uint8")
+        if image.shape[:2] != (target_height, target_width):
+            image = cv2.resize(image, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+        prepared_images.append(image)
+
+    blank_image = np.zeros_like(prepared_images[0])
+    num_rows = math.ceil(len(prepared_images) / num_columns)
+    row_images = []
+    for row_index in range(num_rows):
+        row_start = row_index * num_columns
+        row = prepared_images[row_start:row_start + num_columns]
+        while len(row) < num_columns:
+            row.append(blank_image)
+        row_images.append(np.hstack(row))
+    return np.vstack(row_images)
+
+
 def select_camera_streams(camera_names, front_value, left_value, right_value, pano_value=None):
     source_values = {
         'front': front_value,
@@ -373,6 +401,9 @@ def inference_process(args, config, ros_operator, policy, stats, t, pre_action):
             right_value=img_right,
             pano_value=img_pano,
         )
+        model_preview_images = [obs['images'][camera_name] for camera_name in config['camera_names']]
+        model_view = build_image_grid(model_preview_images, num_columns=3)
+        cv2.imwrite("/home/agilex/cobot_magic/aloha-devel/act/002.png", model_view)
 
         if args.use_depth_image:
             obs['images_depth'] = select_camera_streams(
