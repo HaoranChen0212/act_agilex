@@ -38,10 +38,10 @@
 
 python train.py \
     --dataset_dir ../move_pen/move_pen_9im_v1 ../move_pen/move_pen_9im_v2 ../move_pen/move_pen_9im_v3 \
-    --camera_names pano_yaw_m180 pano_yaw_m120 pano_yaw_m060 pano_yaw_p000 pano_yaw_p060 pano_yaw_p120 \
+    --camera_names pano_yaw_m180 pano_yaw_m120 pano_yaw_m060 pano_yaw_p000 pano_yaw_p060 pano_yaw_p120 image_wide cam_right_wrist\
     --use_all_dirs_for_val True \
     --use_robot_base True \
-    --exp_name move_pen_pano_as_6im \
-    --ckpt_dir exp/move_pen_pano_as_6im \
+    --exp_name move_pen_pano_as_8im \
+    --ckpt_dir ../exp/move_pen_pano_as_8im \
     --batch_size 8 \
-    --num_epochs 30000
+    --num_epochs 25000
