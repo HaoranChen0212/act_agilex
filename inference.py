@@ -154,6 +154,27 @@ def build_image_grid(images, num_columns=3):
     return np.vstack(row_images)
 
 
+def normalize_camera_image_shapes(images):
+    images = [image for image in images if image is not None]
+    if not images:
+        raise ValueError("Expected at least one image to normalize.")
+
+    target_height, target_width = images[0].shape[:2]
+    normalized = []
+    for image in images:
+        if image.shape[:2] == (target_height, target_width):
+            normalized.append(image)
+            continue
+
+        interpolation = cv2.INTER_AREA
+        if image.shape[0] < target_height or image.shape[1] < target_width:
+            interpolation = cv2.INTER_LINEAR
+        normalized.append(
+            cv2.resize(image, (target_width, target_height), interpolation=interpolation)
+        )
+    return normalized
+
+
 def select_camera_streams(camera_names, front_value, left_value, right_value, pano_value=None):
     source_values = {
         'front': front_value,
@@ -312,19 +333,22 @@ def make_policy(policy_class, policy_config):
 
 
 def get_image(observation, camera_names):
-    curr_images = []
-    for cam_name in camera_names:
-        curr_image = rearrange(observation['images'][cam_name], 'h w c -> c h w')
-        curr_images.append(curr_image)
-    curr_image = np.stack(curr_images, axis=0)
+    curr_images = normalize_camera_image_shapes(
+        [observation['images'][cam_name] for cam_name in camera_names]
+    )
+    curr_channels = []
+    for curr_image in curr_images:
+        curr_image = rearrange(curr_image, 'h w c -> c h w')
+        curr_channels.append(curr_image)
+    curr_image = np.stack(curr_channels, axis=0)
     curr_image = torch.from_numpy(curr_image / 255.0).float().cuda().unsqueeze(0)
     return curr_image
 
 
 def get_depth_image(observation, camera_names):
-    curr_images = []
-    for cam_name in camera_names:
-        curr_images.append(observation['images_depth'][cam_name])
+    curr_images = normalize_camera_image_shapes(
+        [observation['images_depth'][cam_name] for cam_name in camera_names]
+    )
     curr_image = np.stack(curr_images, axis=0)
     curr_image = torch.from_numpy(curr_image / 255.0).float().cuda().unsqueeze(0)
     return curr_image

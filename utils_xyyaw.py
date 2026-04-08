@@ -32,6 +32,27 @@ def compute_relative_base_action(pos, orientation, action_chunk_size):
             actions_rel.append([x,y,yaw])
         trajs.append(actions_rel)
     return trajs
+
+
+def resize_frame_to_shape(frame, target_height, target_width):
+    if frame.shape[:2] == (target_height, target_width):
+        return frame
+
+    interpolation = cv2.INTER_AREA
+    if frame.shape[0] < target_height or frame.shape[1] < target_width:
+        interpolation = cv2.INTER_LINEAR
+    return cv2.resize(frame, (target_width, target_height), interpolation=interpolation)
+
+
+def normalize_camera_image_shapes(images):
+    if not images:
+        raise ValueError("Expected at least one image to normalize.")
+
+    target_height, target_width = images[0].shape[:2]
+    return [
+        resize_frame_to_shape(image, target_height, target_width)
+        for image in images
+    ]
     
     
 class EpisodicDataset(torch.utils.data.Dataset):
@@ -159,6 +180,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         self.is_sim = is_sim
 
         all_cam_images = [image_dict[cam_name] for cam_name in self.camera_names]
+        all_cam_images = normalize_camera_image_shapes(all_cam_images)
         all_cam_images = np.stack(all_cam_images, axis=0)
         image_data = torch.from_numpy(all_cam_images)
         image_data = torch.einsum('k h w c -> k c h w', image_data) / 255.0
@@ -166,6 +188,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         image_depth_data = np.zeros(1, dtype=np.float32)
         if self.use_depth_image:
             all_cam_images_depth = [image_depth_dict[cam_name] for cam_name in self.camera_names]
+            all_cam_images_depth = normalize_camera_image_shapes(all_cam_images_depth)
             all_cam_images_depth = np.stack(all_cam_images_depth, axis=0)
             image_depth_data = torch.from_numpy(all_cam_images_depth) / 255.0
         
@@ -283,6 +306,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         self.is_sim = is_sim
 
         all_cam_images = [image_dict[cam_name] for cam_name in self.camera_names]
+        all_cam_images = normalize_camera_image_shapes(all_cam_images)
         all_cam_images = np.stack(all_cam_images, axis=0)
         image_data = torch.from_numpy(all_cam_images)
         image_data = torch.einsum('k h w c -> k c h w', image_data) / 255.0
@@ -290,6 +314,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         image_depth_data = np.zeros(1, dtype=np.float32)
         if self.use_depth_image:
             all_cam_images_depth = [image_depth_dict[cam_name] for cam_name in self.camera_names]
+            all_cam_images_depth = normalize_camera_image_shapes(all_cam_images_depth)
             all_cam_images_depth = np.stack(all_cam_images_depth, axis=0)
             image_depth_data = torch.from_numpy(all_cam_images_depth) / 255.0
         
@@ -357,6 +382,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         all_cam_images = []
         for cam_name in self.camera_names:
             all_cam_images.append(image_dict[cam_name])
+        all_cam_images = normalize_camera_image_shapes(all_cam_images)
         all_cam_images = np.stack(all_cam_images, axis=0)
         
         # construct observations
@@ -369,6 +395,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
             all_cam_images_depth = []
             for cam_name in self.camera_names:
                 all_cam_images_depth.append(image_depth_dict[cam_name])
+            all_cam_images_depth = normalize_camera_image_shapes(all_cam_images_depth)
             all_cam_images_depth = np.stack(all_cam_images_depth, axis=0)
             # construct observations
             image_depth_data = torch.from_numpy(all_cam_images_depth)
